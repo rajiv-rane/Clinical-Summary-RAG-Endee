@@ -67,9 +67,10 @@ ENV PYTHONPATH=/app
 # Expose ports
 EXPOSE 8000 8501
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+# Health check - check Streamlit instead of FastAPI (Streamlit is the main service)
+# Use a longer start period for model loading
+HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=5 \
+    CMD curl -f http://localhost:${PORT:-8501}/_stcore/health || curl -f http://localhost:${PORT:-8501}/ || exit 1
 
 # Make startup script executable
 RUN chmod +x /app/start_services.sh
