@@ -18,10 +18,12 @@ load_dotenv()
 try:
     from transformers import AutoTokenizer, AutoModel
     TRANSFORMERS_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     TRANSFORMERS_AVAILABLE = False
     AutoTokenizer = None
     AutoModel = None
+    # Don't print error here - it will be handled where needed
+    # The transformers library should be installed in production
 import time
 from datetime import datetime
 import os
