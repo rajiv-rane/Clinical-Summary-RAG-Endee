@@ -1,0 +1,78 @@
+# Exclude large files and directories
+ingestion-phase/embeddings/
+ingestion-phase/vector_db/
+ingestion-phase/data/
+ingestion-phase/processed/
+ingestion-phase/logs/
+ingestion-phase/temp/
+ingestion-phase/__pycache__/
+ingestion-phase/*.pyc
+ingestion-phase/*.pyo
+
+# Exclude Jupyter notebooks (not needed in production)
+ingestion-phase/scripts/*.ipynb
+ingestion-phase/scripts/__pycache__/
+
+# Exclude documentation (not needed in container)
+ingestion-phase/*.md
+ingestion-phase/README*.md
+ingestion-phase/GROQ_SETUP.md
+
+# Exclude web frontend (not used in this deployment)
+ingestion-phase/web/
+ingestion-phase/node_modules/
+
+# Exclude local config and env files
+ingestion-phase/.env
+ingestion-phase/local_config.json
+ingestion-phase/.env.local
+
+# Exclude test files
+ingestion-phase/test_*.py
+ingestion-phase/demo.py
+
+# Exclude batch/shell scripts (not needed in Docker)
+ingestion-phase/*.bat
+ingestion-phase/*.sh
+ingestion-phase/start_api.bat
+ingestion-phase/start_api.sh
+ingestion-phase/start.bat
+ingestion-phase/start.sh
+
+# Exclude deployment configs from ingestion-phase (we use root ones)
+ingestion-phase/Dockerfile
+ingestion-phase/railway.json
+ingestion-phase/render.yaml
+ingestion-phase/Procfile
+
+# Root level files
+DEPLOYMENT_*.md
+QUICK_DEPLOY.md
+STEP_BY_STEP_DEPLOY.md
+README.md
+.git/
+.gitignore
+.cursorignore
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
