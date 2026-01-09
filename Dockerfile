@@ -11,9 +11,18 @@ RUN apt-get update && apt-get install -y \
 COPY ingestion-phase/requirements-prod.txt /tmp/requirements.txt
 
 # Install Python dependencies
-# Use CPU-only PyTorch to reduce size significantly
-RUN pip install --no-cache-dir --user -r /tmp/requirements.txt && \
-    pip cache purge
+# First install regular packages from PyPI
+RUN pip install --no-cache-dir --user -r /tmp/requirements.txt
+
+# Then install CPU-only PyTorch (much smaller than GPU version)
+# This reduces torch from ~2GB to ~200MB
+RUN pip install --no-cache-dir --user --index-url https://download.pytorch.org/whl/cpu torch>=2.0.0
+
+# Install transformers and huggingface (after torch)
+RUN pip install --no-cache-dir --user transformers>=4.30.0 huggingface-hub>=0.16.0
+
+# Clean up pip cache
+RUN pip cache purge
 
 # Final stage - minimal runtime image
 FROM python:3.10-slim
