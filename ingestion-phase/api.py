@@ -85,7 +85,7 @@ async def lifespan(app: FastAPI):
     global tokenizer, model, chroma_client, chroma_collection
     global mongo_client, mongo_db, patients_collection, http_client
     
-    # Load models
+    # Load models (with timeout to prevent blocking startup)
     if not TRANSFORMERS_AVAILABLE:
         print("⚠️ Transformers library not available. Some features may be limited.")
         tokenizer = None
@@ -93,15 +93,24 @@ async def lifespan(app: FastAPI):
     else:
         try:
             print("Loading Bio ClinicalBERT model...")
-            tokenizer = AutoTokenizer.from_pretrained("emilyalsentzer/Bio_ClinicalBERT")
-            model = AutoModel.from_pretrained("emilyalsentzer/Bio_ClinicalBERT")
+            print("   (This may take 1-2 minutes on first run - downloading ~400MB model)")
+            # Set cache directory to avoid permission issues
+            os.environ["TRANSFORMERS_CACHE"] = os.getenv("TRANSFORMERS_CACHE", "/app/.cache/transformers")
+            os.environ["HF_HOME"] = os.getenv("HF_HOME", "/app/.cache/huggingface")
+            tokenizer = AutoTokenizer.from_pretrained("emilyalsentzer/Bio_ClinicalBERT", cache_dir="/app/.cache/transformers")
+            model = AutoModel.from_pretrained("emilyalsentzer/Bio_ClinicalBERT", cache_dir="/app/.cache/transformers")
             model.eval()
             if torch.cuda.is_available():
                 model.to("cuda")
+            print("✅ Bio ClinicalBERT model loaded successfully!")
         except Exception as e:
             print(f"⚠️ Error loading transformers model: {str(e)}")
+            print(f"   Full error: {type(e).__name__}: {str(e)}")
+            import traceback
+            traceback.print_exc()
             tokenizer = None
             model = None
+            print("   FastAPI will continue without embedding model (some features disabled)")
     
     # Connect to ChromaDB
     print("Connecting to ChromaDB...")

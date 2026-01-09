@@ -73,27 +73,43 @@ echo "⏳ FastAPI starting (PID: $FASTAPI_PID)..."
 echo "   Check /tmp/fastapi.log for FastAPI output"
 
 # Wait for FastAPI to start (with retries)
+# Model loading can take 2-3 minutes on first run, so wait longer
 echo "⏳ Waiting for FastAPI to initialize..."
-MAX_WAIT=60
+echo "   (Model loading may take 2-3 minutes on first run)"
+MAX_WAIT=180  # Increased to 3 minutes for model download
 WAIT_COUNT=0
 FASTAPI_READY=0
 
 while [ $WAIT_COUNT -lt $MAX_WAIT ]; do
+    # Check if FastAPI process is still running
+    if ! kill -0 $FASTAPI_PID 2>/dev/null; then
+        echo "❌ FastAPI process died! Check logs below:"
+        cat /tmp/fastapi.log 2>/dev/null || echo "   (No logs available)"
+        break
+    fi
+    
+    # Check if FastAPI is responding
     if curl -f -s http://localhost:$FASTAPI_PORT/health > /dev/null 2>&1; then
         echo "✅ FastAPI is ready!"
         FASTAPI_READY=1
         break
     fi
-    sleep 2
-    WAIT_COUNT=$((WAIT_COUNT + 2))
+    sleep 5
+    WAIT_COUNT=$((WAIT_COUNT + 5))
     echo "   Still waiting... ($WAIT_COUNT/$MAX_WAIT seconds)"
+    
+    # Show recent logs every 30 seconds
+    if [ $((WAIT_COUNT % 30)) -eq 0 ] && [ $WAIT_COUNT -gt 0 ]; then
+        echo "   Recent FastAPI logs:"
+        tail -5 /tmp/fastapi.log 2>/dev/null | sed 's/^/      /' || echo "      (No logs yet)"
+    fi
 done
 
 if [ $FASTAPI_READY -eq 0 ]; then
     echo "⚠️  FastAPI did not start within $MAX_WAIT seconds"
     echo "   Streamlit will start anyway (fallback mode)"
-    echo "   FastAPI logs:"
-    tail -20 /tmp/fastapi.log 2>/dev/null || echo "   (No logs available)"
+    echo "   Full FastAPI logs:"
+    cat /tmp/fastapi.log 2>/dev/null | tail -30 | sed 's/^/   /' || echo "   (No logs available)"
 fi
 
 # Start Streamlit in foreground (this will be the main process)
