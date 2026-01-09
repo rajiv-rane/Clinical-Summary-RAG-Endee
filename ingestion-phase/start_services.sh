@@ -88,8 +88,8 @@ while [ $WAIT_COUNT -lt $MAX_WAIT ]; do
         break
     fi
     
-    # Check if FastAPI is responding
-    if curl -f -s http://localhost:$FASTAPI_PORT/health > /dev/null 2>&1; then
+    # Check if FastAPI is responding (use root endpoint - simpler and faster)
+    if curl -f -s http://localhost:$FASTAPI_PORT/ > /dev/null 2>&1; then
         echo "✅ FastAPI is ready!"
         FASTAPI_READY=1
         break

@@ -504,29 +504,41 @@ async def root():
         "version": "1.0.0"
     }
 
+@app.get("/")
+async def root():
+    """Simple root endpoint - responds immediately even during startup"""
+    return {
+        "status": "online",
+        "service": "Medical Discharge Summary API",
+        "version": "1.0.0",
+        "message": "API is starting up. Use /health for detailed status."
+    }
+
 @app.get("/health")
 async def health():
-    """Detailed health check"""
-    groq_status = "unknown"
-    groq_message = ""
+    """Detailed health check - may take time if models are loading"""
     try:
-        groq_available, status_msg = await check_groq_available()
-        groq_status = "connected" if groq_available else "disconnected"
-        groq_message = status_msg
-    except Exception as e:
-        groq_status = "error checking"
-        groq_message = str(e)
-    
-    return {
-        "status": "healthy",
-        "mongodb": "connected" if mongo_client else "disconnected",
-        "chromadb": "connected" if chroma_client else "disconnected",
-        "model": "loaded" if model else "not loaded",
-        "groq": groq_status,
-        "groq_message": groq_message,
-        "groq_model": GROQ_MODEL,
-        "groq_url": GROQ_BASE_URL,
-        "api_key_set": bool(GROQ_API_KEY),
+        groq_status = "unknown"
+        groq_message = ""
+        try:
+            groq_available, status_msg = await check_groq_available()
+            groq_status = "connected" if groq_available else "disconnected"
+            groq_message = status_msg
+        except Exception as e:
+            groq_status = "error checking"
+            groq_message = str(e)
+        
+        return {
+            "status": "healthy",
+            "mongodb": "connected" if mongo_client else "disconnected",
+            "chromadb": "connected" if chroma_client else "disconnected",
+            "model": "loaded" if model else "not loaded",
+            "transformers_available": TRANSFORMERS_AVAILABLE,
+            "groq": groq_status,
+            "groq_message": groq_message,
+            "groq_model": GROQ_MODEL,
+            "groq_url": GROQ_BASE_URL,
+            "api_key_set": bool(GROQ_API_KEY),
         "cache_size": len(embedding_cache)
     }
 

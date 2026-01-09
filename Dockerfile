@@ -70,8 +70,9 @@ EXPOSE 8000 8501
 # Health check - check Streamlit (main service)
 # Railway will check the PORT environment variable
 # Use a longer start period for model loading (3 minutes)
+# Note: Railway uses its own health checks, this is just for Docker
 HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=5 \
-    CMD curl -f http://localhost:8501/_stcore/health || curl -f http://localhost:8501/ || exit 1
+    CMD curl -f http://localhost:${PORT:-8501}/_stcore/health || curl -f http://localhost:${PORT:-8501}/ || exit 1
 
 # Make startup script executable
 RUN chmod +x /app/start_services.sh
