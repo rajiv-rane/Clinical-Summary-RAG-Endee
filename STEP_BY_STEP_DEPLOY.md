@@ -66,12 +66,13 @@ Follow these steps exactly to deploy your application for the exhibition.
 
 1. Once the service appears, **click on it**
 2. Go to the **"Settings"** tab (left sidebar)
-3. Scroll down to find:
-   - **Root Directory**: Change to `ingestion-phase`
-   - **Start Command**: Should be `/app/start_services.sh` (verify it's there)
-4. **Save** if you made changes
+3. Railway should automatically detect the Dockerfile in the root directory
+4. Verify these settings:
+   - **Build Command**: Should auto-detect Docker build
+   - **Start Command**: Should be `/app/start_services.sh` (from railway.json)
+5. **No need to set Root Directory** - the root Dockerfile handles this
 
-**✅ Check:** Settings are saved.
+**✅ Check:** Settings are correct (Railway auto-detects Docker).
 
 ---
 
