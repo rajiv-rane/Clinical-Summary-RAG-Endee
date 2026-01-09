@@ -540,8 +540,8 @@ async def health():
             "groq_model": GROQ_MODEL,
             "groq_url": GROQ_BASE_URL,
             "api_key_set": bool(GROQ_API_KEY),
-        "cache_size": len(embedding_cache)
-    }
+            "cache_size": len(embedding_cache)
+        }
 
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
