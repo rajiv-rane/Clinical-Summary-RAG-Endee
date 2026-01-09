@@ -208,6 +208,20 @@ class FastAPIClient:
         except httpx.HTTPStatusError as e:
             return f"❌ API error: {e.response.text}"
     
+    def embed_text(self, text: str) -> List[float]:
+        """Generate embedding for text via FastAPI"""
+        try:
+            response = self.client.post(
+                f"{self.base_url}/api/embed",
+                json={"text": text}
+            )
+            response.raise_for_status()
+            return response.json()["embedding"]
+        except httpx.RequestError as e:
+            raise RuntimeError(f"Error connecting to API for embedding: {str(e)}")
+        except httpx.HTTPStatusError as e:
+            raise RuntimeError(f"API error for embedding: {e.response.text}")
+    
     def search_similar(self, query_text: str, n_results: int = 3) -> List[Dict]:
         """Search similar cases via FastAPI"""
         try:
@@ -1860,7 +1874,7 @@ Extract Name, Unit No, Date of Birth, and Sex exactly as provided."""
             return f"❌ Error connecting to Groq API: {str(e)}"
 
     # --- START: NEW FEEDBACK LOOP METHOD ---
-    def add_summary_to_vector_db(self, patient_info: Dict, summary_text: str):
+    def add_summary_to_vector_db(self, patient_info: Dict, summary_text: str, api_client=None):
         """
         Embeds the finalized discharge summary and adds it to the ChromaDB collection.
         This serves as the feedback loop, adding a high-quality, human-reviewed
@@ -1875,13 +1889,25 @@ Extract Name, Unit No, Date of Birth, and Sex exactly as provided."""
         
         try:
             # 1. Generate embedding for the new summary
-            # Check if transformers model is available
-            if self.tokenizer is None or self.model is None:
-                st.error("❌ Cannot add summary to knowledge base: Embedding model not available. The transformers model needs to be loaded. This feature requires the Bio ClinicalBERT model to be initialized.")
-                st.info("💡 Tip: The embedding model loads automatically when FastAPI backend is available. If you're in fallback mode, wait for FastAPI to finish loading (2-3 minutes), then try again.")
-                return False
+            # Try FastAPI first if available, then fall back to local model
+            summary_embedding = None
             
-            summary_embedding = self.embed_text(summary_text)
+            # Try FastAPI embedding endpoint first
+            if api_client and hasattr(api_client, 'embed_text'):
+                try:
+                    summary_embedding = api_client.embed_text(summary_text)
+                    st.info("💡 Using FastAPI embedding service")
+                except Exception as e:
+                    st.warning(f"⚠️ FastAPI embedding failed: {str(e)}. Trying local model...")
+                    summary_embedding = None
+            
+            # Fall back to local model if FastAPI didn't work
+            if summary_embedding is None:
+                if self.tokenizer is None or self.model is None:
+                    st.error("❌ Cannot add summary to knowledge base: Embedding model not available.")
+                    st.info("💡 Tip: The embedding model loads automatically when FastAPI backend is available. If you're in fallback mode, wait for FastAPI to finish loading (2-3 minutes), then try again.")
+                    return False
+                summary_embedding = self.embed_text(summary_text)
             
             # 2. Prepare a unique ID
             # Using unit_no and timestamp allows for multiple summary versions
@@ -2594,7 +2620,8 @@ def main():
                     with st.spinner("Embedding summary and updating knowledgebase..."):
                         st.session_state.rag_system.add_summary_to_vector_db(
                             st.session_state.current_patient,
-                            st.session_state.editable_summary
+                            st.session_state.editable_summary,
+                            api_client=st.session_state.api_client if st.session_state.get('use_fastapi') else None
                         )
                 else:
                     st.warning("Please ensure a patient is loaded and a summary is present.")

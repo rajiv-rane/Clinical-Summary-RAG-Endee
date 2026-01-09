@@ -829,6 +829,30 @@ async def get_patient(request: PatientRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving patient: {str(e)}")
 
+@app.post("/api/embed")
+async def embed_text_endpoint(request: Dict[str, str]):
+    """Generate embedding for text using Bio ClinicalBERT"""
+    if "text" not in request:
+        raise HTTPException(status_code=400, detail="Missing 'text' field in request")
+    
+    text = request["text"]
+    if not text:
+        raise HTTPException(status_code=400, detail="Text cannot be empty")
+    
+    try:
+        embedding = await embed_text_async(text)
+        return {"embedding": embedding}
+    except RuntimeError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Embedding model not available: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error generating embedding: {str(e)}"
+        )
+
 @app.get("/api/patients")
 async def get_all_patients():
     """Get list of all patients with name and unit number"""
