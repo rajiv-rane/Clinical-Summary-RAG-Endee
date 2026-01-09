@@ -165,7 +165,10 @@ def clean_patient_data_for_json(patient_data: Optional[Dict]) -> Optional[Dict]:
     return cleaned
 
 # FastAPI client configuration
-FASTAPI_BASE_URL = os.getenv("FASTAPI_URL", "http://localhost:8000")
+# FastAPI URL - use environment variable or detect based on deployment
+# In production (Docker), FastAPI runs on localhost:8000 internally
+# In local dev, use localhost:8000
+FASTAPI_BASE_URL = os.getenv("FASTAPI_URL", os.getenv("FASTAPI_BASE_URL", "http://localhost:8000"))
 
 class FastAPIClient:
     """Client for FastAPI backend"""

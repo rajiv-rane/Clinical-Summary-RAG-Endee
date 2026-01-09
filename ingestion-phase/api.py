@@ -38,8 +38,9 @@ except ImportError:
     AutoModel = None
 
 # Configuration
-MONGO_URI = "mongodb+srv://ishaanroopesh0102:6eShFuC0pNnFFNGm@cluster0.biujjg4.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
-CHROMA_PATH = "vector_db/chroma"
+# Use environment variable if available, otherwise fallback to default
+MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://ishaanroopesh0102:6eShFuC0pNnFFNGm@cluster0.biujjg4.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
+CHROMA_PATH = os.getenv("CHROMA_PATH", "vector_db/chroma")
 
 # Groq API Configuration
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")

@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: clinical-rag-app
+    env: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: MONGO_URI
+        fromDatabase:
+          name: mongodb
+          property: connectionString
+      - key: PYTHONUNBUFFERED
+        value: 1
+      - key: TRANSFORMERS_CACHE
+        value: /app/.cache/transformers
+      - key: HF_HOME
+        value: /app/.cache/huggingface
