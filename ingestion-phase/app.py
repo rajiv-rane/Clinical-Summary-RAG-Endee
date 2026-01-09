@@ -268,18 +268,30 @@ class FastAPIClient:
         self.client.close()
 
 def _load_tokenizer_model():
+    """Load Bio ClinicalBERT tokenizer and model for embeddings"""
     if not TRANSFORMERS_AVAILABLE:
-        st.error("❌ Transformers library not available. Please install it: pip install transformers")
+        # Don't show error here - it will be handled where it's used
         return None, None
     try:
-        tokenizer = AutoTokenizer.from_pretrained("emilyalsentzer/Bio_ClinicalBERT")
-        model = AutoModel.from_pretrained("emilyalsentzer/Bio_ClinicalBERT")
+        # Set cache directories (same as FastAPI)
+        os.environ["HF_HOME"] = os.getenv("HF_HOME", "/app/.cache/huggingface")
+        os.environ["TRANSFORMERS_CACHE"] = os.getenv("TRANSFORMERS_CACHE", "/app/.cache/transformers")
+        cache_dir = "/app/.cache/transformers"
+        
+        # Create cache directory if it doesn't exist
+        os.makedirs(cache_dir, exist_ok=True)
+        
+        tokenizer = AutoTokenizer.from_pretrained("emilyalsentzer/Bio_ClinicalBERT", cache_dir=cache_dir)
+        model = AutoModel.from_pretrained("emilyalsentzer/Bio_ClinicalBERT", cache_dir=cache_dir)
         model.eval()
         if torch.cuda.is_available():
             model.to("cuda")
         return tokenizer, model
     except Exception as e:
-        st.error(f"❌ Error loading transformers model: {str(e)}")
+        # Log error but don't show it immediately - let the calling code handle it
+        import traceback
+        print(f"⚠️ Error loading transformers model: {str(e)}")
+        traceback.print_exc()
         return None, None
 
 def _connect_mongo(uri: str):
@@ -1591,8 +1603,17 @@ FORMATTING REQUIREMENTS:
     
     def _load_models(self):
         """Load Bio ClinicalBERT model for embeddings"""
-        with st.spinner("Loading Bio ClinicalBERT model..."):
-            self.tokenizer, self.model = _load_tokenizer_model()
+        # Only show spinner if transformers is available
+        if TRANSFORMERS_AVAILABLE:
+            with st.spinner("Loading Bio ClinicalBERT model... (This may take 1-2 minutes on first run)"):
+                self.tokenizer, self.model = _load_tokenizer_model()
+                if self.tokenizer is None or self.model is None:
+                    st.warning("⚠️ Could not load embedding model. Some features (like 'Commit to Knowledge Base') will be unavailable until FastAPI backend is ready.")
+        else:
+            # Transformers not available at all
+            st.warning("⚠️ Transformers library not available. Some features may be limited. The embedding model will be available once FastAPI backend finishes loading.")
+            self.tokenizer = None
+            self.model = None
     
     def _connect_databases(self):
         """Connect to MongoDB and ChromaDB"""
