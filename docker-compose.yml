@@ -1,0 +1,56 @@
+services:
+  # Endee Vector Database
+  endee:
+    image: endeeio/endee-server:latest
+    container_name: endee-server
+    ports:
+      - "8080:8080"
+    volumes:
+      - endee_data:/data
+    environment:
+      - NDD_AUTH_TOKEN= # Optional: set a token if needed
+      # - NDD_NUM_THREADS=4 # Optional tuning
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/api/v1/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # RAG Application Backend
+  backend:
+    build:
+      context: ./ingestion-phase
+      dockerfile: Dockerfile
+    container_name: rag-backend
+    command: python start_api.py
+    ports:
+      - "8000:8000"
+    environment:
+      - MONGO_URI=${MONGO_URI}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - ENDEE_URL=http://endee:8080
+      - ENDEE_INDEX_NAME=patient_vectors
+    depends_on:
+      endee:
+        condition: service_healthy
+    restart: on-failure
+
+  # Streamlit Frontend
+  frontend:
+    build:
+      context: ./ingestion-phase
+      dockerfile: Dockerfile
+    container_name: rag-frontend
+    command: streamlit run app.py --server.port=8501 --server.address=0.0.0.0
+    ports:
+      - "8501:8501"
+    environment:
+      - API_URL=http://backend:8000
+      - GROQ_API_KEY=${GROQ_API_KEY}
+    depends_on:
+      - backend
+    restart: on-failure
+
+volumes:
+  endee_data:

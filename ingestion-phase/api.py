@@ -10,7 +10,8 @@ from typing import Optional, List, Dict, Any, Tuple
 import asyncio
 import httpx
 import torch
-import chromadb
+# import chromadb # Removed for Endee
+from endee_client import EndeeClient
 from motor.motor_asyncio import AsyncIOMotorClient
 import hashlib
 import json
@@ -39,8 +40,12 @@ except ImportError:
 
 # Configuration
 # Use environment variable if available, otherwise fallback to default
-MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://ishaanroopesh0102:6eShFuC0pNnFFNGm@cluster0.biujjg4.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
-CHROMA_PATH = os.getenv("CHROMA_PATH", "vector_db/chroma")
+MONGO_URI = os.getenv("MONGO_URI", "").strip()
+if not MONGO_URI:
+    MONGO_URI = "mongodb+srv://ishaanroopesh0102:6eShFuC0pNnFFNGm@cluster0.biujjg4.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+# CHROMA_PATH = os.getenv("CHROMA_PATH", "vector_db/chroma")
+ENDEE_URL = os.getenv("ENDEE_URL", "http://localhost:8080")
+ENDEE_INDEX_NAME = os.getenv("ENDEE_INDEX_NAME", "patient_vectors")
 
 # Groq API Configuration
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
@@ -55,8 +60,9 @@ OLLAMA_MODEL = "llama3"
 embedding_cache = {}
 tokenizer = None
 model = None
-chroma_client = None
-chroma_collection = None
+# chroma_client = None
+# chroma_collection = None
+endee_client = None
 mongo_client = None
 mongo_db = None
 patients_collection = None
@@ -113,10 +119,17 @@ async def lifespan(app: FastAPI):
             model = None
             print("   FastAPI will continue without embedding model (some features disabled)")
     
-    # Connect to ChromaDB
-    print("Connecting to ChromaDB...")
-    chroma_client = chromadb.PersistentClient(path=CHROMA_PATH)
-    chroma_collection = chroma_client.get_or_create_collection("patient_embeddings")
+    # Connect to Endee
+    print("Connecting to Endee Vector DB...")
+    endee_client = EndeeClient(base_url=ENDEE_URL)
+    # Check health/create index
+    health = endee_client.health_check()
+    if health.get("status") == "ok":
+        print("✅ Endee DB connected!")
+        # Ensure index exists (768 dim for ClinicalBERT)
+        endee_client.create_index(ENDEE_INDEX_NAME, dim=768, force_recreate=False)
+    else:
+        print(f"⚠️ Could not connect to Endee DB: {health}")
     
     # Connect to MongoDB
     print("Connecting to MongoDB...")
@@ -518,30 +531,30 @@ async def root():
 @app.get("/health")
 async def health():
     """Detailed health check - may take time if models are loading"""
+    groq_status = "unknown"
+    groq_message = ""
     try:
-        groq_status = "unknown"
-        groq_message = ""
-        try:
-            groq_available, status_msg = await check_groq_available()
-            groq_status = "connected" if groq_available else "disconnected"
-            groq_message = status_msg
-        except Exception as e:
-            groq_status = "error checking"
-            groq_message = str(e)
-        
-        return {
-            "status": "healthy",
-            "mongodb": "connected" if mongo_client else "disconnected",
-            "chromadb": "connected" if chroma_client else "disconnected",
-            "model": "loaded" if model else "not loaded",
-            "transformers_available": TRANSFORMERS_AVAILABLE,
-            "groq": groq_status,
-            "groq_message": groq_message,
-            "groq_model": GROQ_MODEL,
-            "groq_url": GROQ_BASE_URL,
-            "api_key_set": bool(GROQ_API_KEY),
-            "cache_size": len(embedding_cache)
-        }
+        groq_available, status_msg = await check_groq_available()
+        groq_status = "connected" if groq_available else "disconnected"
+        groq_message = status_msg
+    except Exception as e:
+        groq_status = "error checking"
+        groq_message = str(e)
+    
+    return {
+        "status": "healthy",
+        "status": "healthy",
+        "mongodb": "connected" if mongo_client else "disconnected",
+        "endee": "connected" if endee_client and endee_client.health_check().get("status") == "ok" else "disconnected",
+        "model": "loaded" if model else "not loaded",
+        "transformers_available": TRANSFORMERS_AVAILABLE,
+        "groq": groq_status,
+        "groq_message": groq_message,
+        "groq_model": GROQ_MODEL,
+        "groq_url": GROQ_BASE_URL,
+        "api_key_set": bool(GROQ_API_KEY),
+        "cache_size": len(embedding_cache)
+    }
 
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
@@ -561,25 +574,19 @@ async def chat(request: ChatRequest):
         if request.patient_data:
             # Format patient data for context
             patient_text = format_patient_fields(request.patient_data)
-            patient_name = request.patient_data.get('name', 'Unknown')
-            unit_no = request.patient_data.get('unit no', 'N/A')
             patient_context = f"""
-
 CURRENT PATIENT INFORMATION:
 {patient_text}
 
-Note: The person you are talking to is a medical professional (doctor or nurse) asking questions about this patient. Answer their questions based on the patient information provided above."""
+The user (a doctor) is asking a question about this patient. Answer accurately using only the data above."""
         
-        system_prompt = """You are a medical AI assistant designed to help doctors and nurses with clinical documentation and medical questions. 
-The person you are talking to is a medical professional (doctor or nurse), NOT a patient. 
-When patient information is provided, use it to answer questions about that specific patient.
-IMPORTANT: Only use the patient information provided in the CURRENT PATIENT INFORMATION section below. Do not reference any previous patients or conversations.
-Provide accurate, helpful responses based on the patient data. Be concise but thorough."""
+        system_prompt = """You are a medical AI assistant. You must provide direct, clinical answers to the doctor's questions based on the provided patient data.
+Do not just offer to help; if the doctor asks for history, summary, or specific details, provide them immediately using the data.
+Be professional, concise, and thorough. If information is missing, say it's not available in the records."""
         
         user_message = request.message
         if patient_context:
-            # Add explicit instruction to use only the current patient
-            user_message = f"{request.message}\n\n{patient_context}\n\nRemember: Only answer questions about the patient information provided above. Do not reference any other patients."
+            user_message = f"QUESTION: {request.message}\n\n{patient_context}"
         else:
             # If no patient data, remind that patient needs to be selected
             user_message = f"{request.message}\n\nNote: No patient is currently selected. Please select a patient first to get patient-specific information."
@@ -710,15 +717,12 @@ FORMATTING REQUIREMENTS:
 
 @app.post("/api/search-similar")
 async def search_similar(request: SearchRequest):
-    """Search for similar cases using RAG - excludes MongoDB patients"""
+    """Search for similar cases using Endee - fetches details from MongoDB"""
     try:
-        # Check if ChromaDB is initialized
-        if chroma_collection is None:
-            raise HTTPException(
-                status_code=503,
-                detail="ChromaDB collection not initialized. Please check if the vector database is set up correctly."
-            )
-        
+        # Check if Endee is initialized
+        if endee_client is None:
+             raise HTTPException(status_code=503, detail="Endee client not initialized.")
+
         # Check if transformers model is available
         if not TRANSFORMERS_AVAILABLE or tokenizer is None or model is None:
             raise HTTPException(
@@ -726,68 +730,63 @@ async def search_similar(request: SearchRequest):
                 detail="Embedding model not available. Please ensure transformers library is installed and models are loaded."
             )
         
-        # Get list of MongoDB patient unit numbers to exclude
-        mongo_unit_nos = set()
-        try:
-            if mongo_client and patients_collection:
-                mongo_patients = await patients_collection.find({}, {"unit no": 1, "_id": 0}).to_list(length=None)
-                mongo_unit_nos = {str(patient.get("unit no", "")) for patient in mongo_patients if patient.get("unit no")}
-        except Exception as e:
-            print(f"Warning: Could not fetch MongoDB patients for filtering: {str(e)}")
-        
         # Generate embedding
         query_embedding = await embed_text_async(request.query_text)
         
-        # Search ChromaDB with more results to account for filtering
+        # Search Endee
+        # Note: Endee returns IDs. We must fetch actual content from Mongo.
+        # This assumes that the 'id' in Endee corresponds to 'unit no' or '_id' in Mongo.
+        # Given the previous code, we'll assume we stored 'unit no' as ID.
+        
         loop = asyncio.get_event_loop()
         results = await loop.run_in_executor(
             None,
-            lambda: chroma_collection.query(
-                query_embeddings=[query_embedding],
-                n_results=request.n_results * 3,  # Get more results to filter
-                include=["documents", "metadatas", "distances"]
+            lambda: endee_client.search(
+                index_name=ENDEE_INDEX_NAME,
+                query_vector=query_embedding,
+                k=request.n_results * 2 # Fetch more to filter
             )
         )
         
-        # Check if results are valid
-        if not results or "documents" not in results or len(results["documents"]) == 0:
+        if not results or not results.get("ids") or len(results["ids"][0]) == 0:
             return {"similar_cases": []}
-        
-        if len(results["documents"][0]) == 0:
-            return {"similar_cases": []}
+            
+        result_ids = results["ids"][0]
+        result_dists = results["distances"][0]
         
         similar_cases = []
-        documents = results["documents"][0]
-        metadatas = results["metadatas"][0] if "metadatas" in results and len(results["metadatas"]) > 0 else [{}] * len(documents)
-        distances = results["distances"][0] if "distances" in results and len(results["distances"]) > 0 else [0.0] * len(documents)
         
-        for i in range(len(documents)):
-            metadata = metadatas[i] if i < len(metadatas) else {}
-            unit_no = str(metadata.get('unit_no') or metadata.get('unit no', ''))
+        # Fetch patient details from MongoDB for these IDs
+        # Assuming ID is 'unit no'
+        for i, unit_no in enumerate(result_ids):
+            if not unit_no: continue
             
-            # Skip if this patient exists in MongoDB (only show ChromaDB/preprocessed patients)
-            if unit_no and unit_no in mongo_unit_nos:
-                continue
+            # Fetch from Mongo
+            patient = await patients_collection.find_one({"unit no": unit_no}, {"_id": 0})
             
-            similar_cases.append({
-                "document": documents[i],
-                "metadata": metadata,
-                "similarity": 1 - distances[i] if i < len(distances) else 0.0
-            })
+            if patient:
+                # Calculate similarity (Endee returns distance, usually L2 or Cosine distance)
+                # If cosine space, similarity = 1 - distance (roughly)
+                similarity = 1.0 - float(result_dists[i]) 
+                
+                similar_cases.append({
+                    "document": json.dumps(patient, default=str), # Serialize whole patient as doc
+                    "metadata": patient,
+                    "similarity": similarity
+                })
             
-            # Stop when we have enough results
             if len(similar_cases) >= request.n_results:
                 break
-        
+                
         return {"similar_cases": similar_cases}
-    except HTTPException:
-        raise
+
     except Exception as e:
         import traceback
         error_trace = traceback.format_exc()
+        print(f"Search error: {error_trace}")
         raise HTTPException(
             status_code=500,
-            detail=f"Error searching similar cases: {str(e)}\n\nTraceback:\n{error_trace}"
+            detail=f"Error searching similar cases: {str(e)}"
         )
 
 @app.post("/api/patient")
@@ -917,7 +916,7 @@ def clean_patient_data(patient: Dict) -> Dict:
     return cleaned
 
 def format_patient_fields(record: Dict) -> str:
-    """Format patient record fields for embedding"""
+    """Format patient record fields for LLM context"""
     fields = [
         "name", "unit no", "admission date", "date of birth", "sex", "service",
         "allergies", "attending", "chief complaint", "major surgical or invasive procedure",
@@ -926,8 +925,8 @@ def format_patient_fields(record: Dict) -> str:
         "brief hospital course", "discharge medications", "discharge diagnosis",
         "discharge condition", "discharge instructions", "follow-up", "discharge disposition"
     ]
-    parts = [f"{field.title()}: {record.get(field, '')}" for field in fields if record.get(field)]
-    return " ".join(parts)
+    parts = [f"- {field.upper()}: {record.get(field, 'N/A')}" for field in fields if record.get(field)]
+    return "\n".join(parts)
 
 if __name__ == "__main__":
     import uvicorn

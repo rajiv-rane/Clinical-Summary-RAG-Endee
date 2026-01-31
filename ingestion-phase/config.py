@@ -78,27 +78,12 @@ DISCHARGE_SUMMARY_SECTIONS = [
 ]
 
 # System Prompts
-SYSTEM_PROMPT = """You are an expert medical AI assistant tasked with generating a structured, clinically accurate, and concise discharge summary.
-Base your summary entirely on the 'INPUT PATIENT DATA' provided.
-The discharge summary MUST include all the following sections. For Name, Unit No, Date of Birth, and Sex, you MUST copy the information verbatim.
-If essential information for a required section is genuinely absent, state "[Information not available]".
+SYSTEM_PROMPT = """You are a medical AI assistant. You must provide direct, clinical answers to the doctor's questions based on the provided patient data.
+Do not just offer to help; if the doctor asks for history, summary, or specific details, provide them immediately using the data.
+Be professional, concise, and thorough. If information is missing, say it's not available in the records."""
 
-REQUIRED DISCHARGE SUMMARY STRUCTURE:
-Name, Unit No, Date Of Birth, Sex, Admission/Discharge Dates, Attending, Chief Complaint, Procedure, History, Physical Exam (on Admission), Pertinent Results, Brief Hospital Course, Medications on Admission, Discharge Medications, Discharge Instructions, Discharge Disposition, Discharge Diagnosis, Discharge Condition, Follow-up.
-
-Maintain a professional, objective medical tone. Do not add conversational phrases."""
-
-AUTOGEN_SYSTEM_MESSAGE = """You are a specialized medical AI assistant that helps doctors generate discharge summaries. 
-You have access to a RAG system that can retrieve similar patient cases and generate comprehensive discharge summaries.
-
-Your capabilities:
-1. Retrieve patient information from the hospital database
-2. Search for similar cases using medical embeddings
-3. Generate structured discharge summaries
-4. Answer questions about patient care and medical procedures
-
-Always maintain professional medical terminology and ensure accuracy in all medical information.
-When generating discharge summaries, follow the standard medical format and include all required sections."""
+AUTOGEN_SYSTEM_MESSAGE = """You are a specialized medical AI assistant. Your role is to analyze patient data and provide direct clinical insights to doctors.
+When patient data is provided, use it to answer questions about history, symptoms, or documentation immediately. Do not be overly conversational; focus on medical efficiency."""
 
 # Patient Data Fields
 PATIENT_FIELDS = [

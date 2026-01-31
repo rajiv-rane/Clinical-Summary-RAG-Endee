@@ -1674,7 +1674,7 @@ FORMATTING REQUIREMENTS:
         return embedding
     
     def format_patient_fields(self, record: Dict) -> str:
-        """Format patient record fields for embedding and AI context"""
+        """Format patient record fields for LLM context"""
         fields = [
             "name", "unit no", "admission date", "date of birth", "sex", "service",
             "allergies", "attending", "chief complaint", "major surgical or invasive procedure",
@@ -1683,17 +1683,17 @@ FORMATTING REQUIREMENTS:
             "brief hospital course", "discharge medications", "discharge diagnosis",
             "discharge condition", "discharge instructions", "follow-up", "discharge disposition"
         ]
-        parts = [f"{field.title()}: {record.get(field, '')}" for field in fields if record.get(field)]
+        parts = [f"- {field.upper()}: {record.get(field, 'N/A')}" for field in fields if record.get(field)]
         
         # If this is a preprocessed patient with full document, include it for complete context
         if record.get('_full_document'):
-            parts.append(f"\n\nFULL PATIENT DOCUMENT:\n{record.get('_full_document')}")
+            parts.append(f"\nFULL PATIENT DOCUMENT:\n{record.get('_full_document')}")
         
         # If discharge summary is available, include it
         if record.get('_discharge_summary'):
-            parts.append(f"\n\nDISCHARGE SUMMARY:\n{record.get('_discharge_summary')}")
+            parts.append(f"\nDISCHARGE SUMMARY:\n{record.get('_discharge_summary')}")
         
-        return " ".join(parts) if parts else "No patient information available"
+        return "\n".join(parts) if parts else "No patient information available"
     
     def get_patient_by_unit_no(self, unit_no: str) -> Optional[Dict]:
         """Retrieve patient record from MongoDB"""
@@ -2023,25 +2023,19 @@ class AutoGenMedicalAgent:
             if patient_data:
                 # Format patient data for context
                 patient_text = self.rag_system.format_patient_fields(patient_data)
-                patient_name = patient_data.get('name', 'Unknown')
-                unit_no = patient_data.get('unit no', 'N/A')
                 patient_context = f"""
-
 CURRENT PATIENT INFORMATION:
 {patient_text}
 
-Note: The person you are talking to is a medical professional (doctor or nurse) asking questions about this patient. Answer their questions based on the patient information provided above."""
+The user (a doctor) is asking a question about this patient. Answer accurately using only the data above."""
             
-            system_prompt = """You are a medical AI assistant designed to help doctors and nurses with clinical documentation and medical questions. 
-The person you are talking to is a medical professional (doctor or nurse), NOT a patient. 
-When patient information is provided, use it to answer questions about that specific patient.
-IMPORTANT: Only use the patient information provided in the CURRENT PATIENT INFORMATION section below. Do not reference any previous patients or conversations.
-Provide accurate, helpful responses based on the patient data. Be concise but thorough."""
+            system_prompt = """You are a medical AI assistant. You must provide direct, clinical answers to the doctor's questions based on the provided patient data.
+Do not just offer to help; if the doctor asks for history, summary, or specific details, provide them immediately using the data.
+Be professional, concise, and thorough. If information is missing, say it's not available in the records."""
             
             user_message = message
             if patient_context:
-                # Add explicit instruction to use only the current patient
-                user_message = f"{message}\n\n{patient_context}\n\nRemember: Only answer questions about the patient information provided above. Do not reference any other patients."
+                user_message = f"QUESTION: {message}\n\n{patient_context}"
             else:
                 # If no patient data, remind that patient needs to be selected
                 user_message = f"{message}\n\nNote: No patient is currently selected. Please select a patient first to get patient-specific information."
