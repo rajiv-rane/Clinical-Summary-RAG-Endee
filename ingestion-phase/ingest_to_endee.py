@@ -1,10 +1,9 @@
-
 import os
 import time
 import torch
 from transformers import AutoTokenizer, AutoModel
 from pymongo import MongoClient
-from endee_client import EndeeClient
+from endee import Endee, Precision
 from tqdm import tqdm
 from dotenv import load_dotenv
 
@@ -37,7 +36,6 @@ def generate_embedding(text, tokenizer, model):
 
 def text_from_patient(patient):
     # Construct a text representation for embedding
-    # Combine relevant fields
     fields = [
         f"Chief Complaint: {patient.get('chief complaint', '')}",
         f"History: {patient.get('history of present illness', '')}",
@@ -52,16 +50,30 @@ def main():
     collection = db["test_patients"]
     
     # Connect to Endee
-    endee = EndeeClient(base_url=ENDEE_URL)
-    health = endee.health_check()
-    if health.get("status") != "ok":
-        print(f"Cannot connect to Endee at {ENDEE_URL}. Please start it first.")
+    endee_client = Endee(token=None)
+    endee_client.set_base_url(ENDEE_URL)
+    try:
+        endee_client.list_indexes()
+    except Exception as e:
+        print(f"Cannot connect to Endee at {ENDEE_URL}: {e}")
         return
 
     # Create Index
     print(f"Creating/Verifying Index '{ENDEE_INDEX_NAME}'...")
-    endee.create_index(ENDEE_INDEX_NAME, dim=768)
-    
+    try:
+        endee_client.create_index(
+            name=ENDEE_INDEX_NAME, 
+            dimension=768,
+            space_type="cosine",
+            precision=Precision.FLOAT32
+        )
+    except Exception as e:
+        if "exists" in str(e).lower():
+            print(f"Index '{ENDEE_INDEX_NAME}' already exists.")
+        else:
+            print(f"Error creating index: {e}")
+            return
+            
     # Load Model
     tokenizer, model = get_embedding_model()
     
@@ -69,10 +81,9 @@ def main():
     patients = list(collection.find({}))
     print(f"Found {len(patients)} patients in MongoDB.")
     
-    vectors = []
-    ids = []
-    
+    upsert_data = []
     batch_size = 50
+    index = endee_client.get_index(ENDEE_INDEX_NAME)
     
     for patient in tqdm(patients):
         unit_no = str(patient.get("unit no", ""))
@@ -82,18 +93,24 @@ def main():
         text = text_from_patient(patient)
         emb = generate_embedding(text, tokenizer, model)
         
-        vectors.append(emb)
-        ids.append(unit_no)
+        upsert_data.append({
+            "id": unit_no,
+            "vector": emb,
+            "meta": {"unit_no": unit_no, "name": patient.get("name", "Unknown")}
+        })
         
-        if len(vectors) >= batch_size:
-            success = endee.add_vectors(ENDEE_INDEX_NAME, vectors, ids)
-            if not success:
-                print("Failed to upload batch")
-            vectors = []
-            ids = []
+        if len(upsert_data) >= batch_size:
+            try:
+                index.upsert(upsert_data)
+            except Exception as e:
+                print(f"Failed to upload batch: {e}")
+            upsert_data = []
             
-    if vectors:
-        endee.add_vectors(ENDEE_INDEX_NAME, vectors, ids)
+    if upsert_data:
+        try:
+            index.upsert(upsert_data)
+        except Exception as e:
+            print(f"Failed to upload final batch: {e}")
         
     print("Ingestion complete!")
 

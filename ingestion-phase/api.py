@@ -11,7 +11,7 @@ import asyncio
 import httpx
 import torch
 # import chromadb # Removed for Endee
-from endee_client import EndeeClient
+from endee import Endee, Precision
 from motor.motor_asyncio import AsyncIOMotorClient
 import hashlib
 import json
@@ -63,6 +63,7 @@ model = None
 # chroma_client = None
 # chroma_collection = None
 endee_client = None
+endee_available = False # New global state for Endee availability
 mongo_client = None
 mongo_db = None
 patients_collection = None
@@ -83,6 +84,44 @@ class SearchRequest(BaseModel):
 
 class PatientRequest(BaseModel):
     unit_no: str
+
+async def initialize_endee():
+    """Initialize Endee Vector DB."""
+    global endee_client, endee_available
+    endee_available = False # Initialize to False
+    try:
+        # Connect to Endee server
+        endee_client = Endee(token=None) # Official client handles non-auth by default
+        endee_client.set_base_url(ENDEE_URL)
+        
+        # Check health by listing indexes
+        try:
+            endee_client.list_indexes()
+            endee_available = True
+            print(f"✅ Endee Vector DB connected at {ENDEE_URL}")
+            
+            # Create index if not exists
+            # Dim 768 for Bio-ClinicalBERT
+            try:
+                endee_client.create_index(
+                    name=ENDEE_INDEX_NAME, 
+                    dimension=768, 
+                    space_type="cosine",
+                    precision=Precision.FLOAT32
+                )
+                print(f"✅ Endee index '{ENDEE_INDEX_NAME}' ensured.")
+            except Exception as e:
+                if "exists" in str(e).lower():
+                    print(f"Index '{ENDEE_INDEX_NAME}' already exists.")
+                else:
+                    print(f"Error ensuring index: {e}")
+        except Exception as e:
+            print(f"❌ Endee connection failed: {e}")
+            endee_available = False
+            
+    except Exception as e:
+        print(f"❌ Error initializing Endee client: {str(e)}")
+        endee_available = False
 
 # Initialize models and connections
 @asynccontextmanager
@@ -120,16 +159,7 @@ async def lifespan(app: FastAPI):
             print("   FastAPI will continue without embedding model (some features disabled)")
     
     # Connect to Endee
-    print("Connecting to Endee Vector DB...")
-    endee_client = EndeeClient(base_url=ENDEE_URL)
-    # Check health/create index
-    health = endee_client.health_check()
-    if health.get("status") == "ok":
-        print("✅ Endee DB connected!")
-        # Ensure index exists (768 dim for ClinicalBERT)
-        endee_client.create_index(ENDEE_INDEX_NAME, dim=768, force_recreate=False)
-    else:
-        print(f"⚠️ Could not connect to Endee DB: {health}")
+    await initialize_endee()
     
     # Connect to MongoDB
     print("Connecting to MongoDB...")
@@ -511,15 +541,6 @@ async def call_ollama_async(messages: List[Dict], options: Dict = None) -> str:
 # API Endpoints
 @app.get("/")
 async def root():
-    """Health check endpoint"""
-    return {
-        "status": "online",
-        "service": "Medical Discharge Summary API",
-        "version": "1.0.0"
-    }
-
-@app.get("/")
-async def root():
     """Simple root endpoint - responds immediately even during startup"""
     return {
         "status": "online",
@@ -543,9 +564,8 @@ async def health():
     
     return {
         "status": "healthy",
-        "status": "healthy",
         "mongodb": "connected" if mongo_client else "disconnected",
-        "endee": "connected" if endee_client and endee_client.health_check().get("status") == "ok" else "disconnected",
+        "endee": "connected" if endee_available else "disconnected",
         "model": "loaded" if model else "not loaded",
         "transformers_available": TRANSFORMERS_AVAILABLE,
         "groq": groq_status,
@@ -719,9 +739,9 @@ FORMATTING REQUIREMENTS:
 async def search_similar(request: SearchRequest):
     """Search for similar cases using Endee - fetches details from MongoDB"""
     try:
-        # Check if Endee is initialized
-        if endee_client is None:
-             raise HTTPException(status_code=503, detail="Endee client not initialized.")
+        # Check if Endee is initialized and available
+        if not endee_available or endee_client is None:
+             raise HTTPException(status_code=503, detail="Endee client not initialized or not available.")
 
         # Check if transformers model is available
         if not TRANSFORMERS_AVAILABLE or tokenizer is None or model is None:
@@ -731,29 +751,26 @@ async def search_similar(request: SearchRequest):
             )
         
         # Generate embedding
-        query_embedding = await embed_text_async(request.query_text)
+        query_vector = await embed_text_async(request.query_text)
         
-        # Search Endee
-        # Note: Endee returns IDs. We must fetch actual content from Mongo.
-        # This assumes that the 'id' in Endee corresponds to 'unit no' or '_id' in Mongo.
-        # Given the previous code, we'll assume we stored 'unit no' as ID.
-        
-        loop = asyncio.get_event_loop()
-        results = await loop.run_in_executor(
-            None,
-            lambda: endee_client.search(
-                index_name=ENDEE_INDEX_NAME,
-                query_vector=query_embedding,
-                k=request.n_results * 2 # Fetch more to filter
+        # Search in Endee
+        try:
+            index = endee_client.get_index(ENDEE_INDEX_NAME)
+            results = index.query(
+                vector=query_vector,
+                top_k=request.n_results, # Use n_results directly
+                ef=128 # ef parameter for HNSW search, can be tuned
             )
-        )
-        
-        if not results or not results.get("ids") or len(results["ids"][0]) == 0:
-            return {"similar_cases": []}
             
-        result_ids = results["ids"][0]
-        result_dists = results["distances"][0]
-        
+            # Official SDK returns List[Dict] with 'id', 'distance', etc.
+            # We need to extract IDs to fetch from MongoDB
+            similar_ids = [item['id'] for item in results]
+            
+            if not similar_ids:
+                return {"similar_cases": []}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error querying Endee: {str(e)}")
+            
         similar_cases = []
         
         # Fetch patient details from MongoDB for these IDs

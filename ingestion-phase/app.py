@@ -8,6 +8,7 @@ import os
 from pymongo import MongoClient
 from bson import ObjectId
 from typing import Dict, List, Optional
+from endee import Endee, Precision
 from dotenv import load_dotenv
 import math
 
@@ -1639,8 +1640,12 @@ FORMATTING REQUIREMENTS:
             self.db = self.mongo_client["hospital_db"]
             self.patients_collection = self.db["test_patients"]
             
-            # ChromaDB connection
+            # ChromaDB connection (still used for local fallback, but Endee is preferred)
             self.chroma_client, self.chroma_collection = _connect_chroma(self.chroma_path)
+
+            # Endee client initialization
+            self.endee_client = Endee(token=None) # Token can be set via ENDEE_API_KEY env var
+            self.endee_client.set_base_url(f"http://{os.getenv('ENDEE_HOST', 'localhost')}:8080")
             
             st.success("✅ Connected to databases successfully")
         except Exception as e:
@@ -1743,15 +1748,45 @@ FORMATTING REQUIREMENTS:
             except Exception as e:
                 st.warning(f"Could not fetch MongoDB patients for filtering: {str(e)}")
             
-            # Search with more results to account for filtering
-            query_embedding = self.embed_text(query_text)
+            # Generate query embedding
+            query_vector = self.embed_text(query_text)
+            
+            similar_cases = []
+            
+            # Try to use Endee for search first
+            try:
+                endee_index = self.endee_client.get_index("patient_vectors")
+                endee_results = endee_index.query(vector=query_vector, top_k=n_results * 3, include_values=True, include_metadata=True)
+                
+                for item in endee_results:
+                    metadata = item.get('metadata', {})
+                    unit_no = str(metadata.get('unit_no') or metadata.get('unit no', ''))
+                    
+                    if unit_no and unit_no in mongo_unit_nos:
+                        continue
+                    
+                    similar_cases.append({
+                        "document": metadata.get('document', ''), # Endee stores document in metadata
+                        "metadata": metadata,
+                        "similarity": item.get('score', 0.0)
+                    })
+                    
+                    if len(similar_cases) >= n_results:
+                        break
+                
+                if similar_cases:
+                    return similar_cases
+                
+            except Exception as e:
+                st.warning(f"Endee search failed or returned no results: {e}. Falling back to ChromaDB.")
+            
+            # Fallback to ChromaDB if Endee fails or returns no results
             results = self.chroma_collection.query(
-                query_embeddings=[query_embedding],
+                query_embeddings=[query_vector],
                 n_results=n_results * 3,  # Get more results to filter
                 include=["documents", "metadatas", "distances"]
             )
             
-            similar_cases = []
             for i in range(len(results["documents"][0])):
                 metadata = results["metadatas"][0][i] if i < len(results["metadatas"][0]) else {}
                 unit_no = str(metadata.get('unit_no') or metadata.get('unit no', ''))
@@ -1794,7 +1829,7 @@ FORMATTING REQUIREMENTS:
         
         system_prompt = """You are an expert medical AI assistant that generates structured, clinically accurate discharge summaries.
 Base your summary entirely on the INPUT PATIENT DATA provided.
-The discharge summary MUST include: Name, Unit No, Date Of Birth, Sex, Admission/Discharge Dates, Attending, Chief Complaint, Procedure, History, Physical Exam (on Admission), Pertinent Results, Brief Hospital Course, Medications on Admission, Discharge Medications, Discharge Instructions, Discharge Disposition, Discharge Diagnosis, Discharge Condition, Follow-up.
+The discharge summary MUST include: Name, Unit No, Date Of Birth, Sex, Admission/Discharge Dates, Attending, Chief Complaint, Procedure, History, Physical Exam (on Admission), Pertinent Results, Brief Hospital Course, Medications on Admission, Discharge Medications, Discharge Instructions, Discharge Disposition, Discharge Condition, Follow-up.
 
 FORMATTING REQUIREMENTS:
 - Use clear section headings on separate lines (e.g., "Name:", "Unit No:", "Admission Date:", etc.)
@@ -1952,17 +1987,27 @@ Extract Name, Unit No, Date of Birth, and Sex exactly as provided."""
             metadata = {
                 "unit_no": str(unit_no),
                 "name": patient_name,
-                "summary": summary_text[:500],  # Store a preview in metadata
+                "document": summary_text, # Store full document for Endee retrieval
                 "source_type": "feedback_summary" # Tag this as a human-reviewed entry
             }
             
-            # 4. Add to ChromaDB
-            self.chroma_collection.add(
-                embeddings=[summary_embedding],
-                documents=[summary_text],  # Store the full summary as the document
-                metadatas=[metadata],
-                ids=[doc_id]
-            )
+            # 4. Add to Endee (preferred)
+            try:
+                endee_index = self.endee_client.get_index("patient_vectors")
+                endee_index.upsert(
+                    vectors=[{"id": doc_id, "values": summary_embedding, "metadata": metadata}]
+                )
+                st.success("✅ Summary added to Endee knowledge base.")
+            except Exception as e:
+                st.warning(f"Endee upsert failed: {e}. Falling back to ChromaDB.")
+                # Fallback to ChromaDB if Endee fails
+                self.chroma_collection.add(
+                    embeddings=[summary_embedding],
+                    documents=[summary_text],  # Store the full summary as the document
+                    metadatas=[metadata],
+                    ids=[doc_id]
+                )
+                st.success("✅ Summary added to ChromaDB knowledge base (Endee fallback).")
             
             # 5. Show notification (as requested)
             # st.toast is available in newer Streamlit; fall back to success if missing
@@ -2094,7 +2139,7 @@ Be professional, concise, and thorough. If information is missing, say it's not 
                     if attempt < max_retries - 1:
                         time.sleep(2 ** attempt)
                         continue
-                    return "⏱️ Request timed out. Please try again."
+                    return "⏱️ Request timed out. Please try again with a shorter message."
                 except Exception as e:
                     last_error = e
                     if attempt < max_retries - 1:

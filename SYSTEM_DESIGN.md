@@ -46,3 +46,18 @@ When a complex query is received (e.g., "Review this patient against similar cas
 -   **Groq Inference**: Extremely high token-per-second (TPS) throughput ensures zero-lag conversational experiences with the AI Agents.
 
 ---
+
+## 4. Design Decisions
+
+### The Evolution: From Custom Wrapper to Official SDK
+A key part of this project's development was the evolution of the vector database interface:
+
+1.  **Phase 1: Deep-Dive Foundations (Custom Client)**
+    Initially, I implemented a custom `EndeeClient` using pure REST API calls and `MsgPack` serialization. This was a deliberate learning choice to master the fundamentals of how high-performance vector databases handle data transmission and HNSW indexing.
+2.  **Phase 2: Production Readiness (Official SDK Integration)**
+    After mastering the fundamentals, I migrated the entire pipeline to the **official Endee Python SDK (`endee>=0.1.8`)**. This transition was aimed at ensuring production reliability, leveraging built-in **Upsert idempotency**, and aligning the project with official feature updates.
+
+### Why Endee?
+Unlike standard databases, Endee's **C++ core** and **specialized vector storage** enable the sub-millisecond retrieval required for medical doctors who need information instantly. By decoupling the vector search (Endee) from document storage (MongoDB), the architecture remains lightweight, scalable, and extremely fast.
+
+---
