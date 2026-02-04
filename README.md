@@ -150,9 +150,9 @@ The project leverages the **official [Endee Python SDK](https://github.com/Endee
 ## Evaluation Guidance
 
 > [!TIP]
-> **Developer Note on Forking:** This project is designed to showcase the integration of high-performance vector engines in medical AI. To comply with evaluation standards, ensure you have **forked** the official [Endee repository](https://github.com/EndeeLabs/endee) as part of your development workflow.
+> **Developer Note on Forking:** This project is designed to showcase the integration of high-performance vector engines in medical AI. As per the evaluation requirements, I have **forked** the official [Endee repository](https://github.com/EndeeLabs/endee) to my personal account:
+> 🔗 **[My Endee Fork](https://github.com/rajiv-rane/endee)**
 
 ---
 
 ---
-
