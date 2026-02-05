@@ -74,30 +74,35 @@ For a detailed breakdown of how the RAG pipeline integrates with **AutoGen** age
     ```
     *(Note: The `MONGO_URI` above is pre-configured and ready for evaluation. You only need to provide your own `GROQ_API_KEY`.)*
 
-### Step 2: Run with Docker (Required for Windows)
-Since Endee Vector DB is a high-performance C++ engine built for Linux, we use **Docker** to provide the necessary environment. This is the simplest way to run the full stack on Windows.
+### Step 2: Run with Docker (Universal & Recommended)
+Docker provides the most stable environment for the Clinical Summary RAG Application. It automatically configures the **Endee Vector DB** and all Python dependencies in a consistent Linux container.
 
-1.  **Install Docker Desktop**: Download and install [Docker Desktop](https://docs.docker.com/desktop/install/windows-install/). Ensure it is running.
-2.  **Launch Services**: Open a terminal in the project root and run:
+1.  **Ensure Docker Desktop is running**: Verify the engine is initialized.
+2.  **Launch Full Stack**:
     ```bash
-    docker-compose up --build
+    docker-compose up --build -d
     ```
+    - `-d` runs the containers in the background (detached mode).
 3.  **Startup Sequence**:
-    -   **Endee DB**: Starts first and initializes the vector engine.
-    -   **Backend**: Waits for Endee to be "healthy" before starting (handles LLM logic).
-    -   **Frontend**: Starts last and connects to the Backend.
+    -   **Endee DB**: High-performance C++ vector engine initializes on port 8080.
+    -   **Backend**: FastAPI service handles clinical logic and LLM orchestration (port 8000).
+    -   **Frontend**: Streamlit-based healthcare professional dashboard (port 8501).
 
-> [!CAUTION]
-> **First Run Warning**: The initial build takes **10-15 minutes** as it downloads PyTorch, Transformers, and the Bio-ClinicalBERT model. **Subsequent starts take less than 20 seconds.**
+> [!NOTE]
+> **Modern Stack Performance**: This build uses **NumPy 2.2+** and the official **Endee Python SDK**. We have pinned all 30+ dependencies to resolve standard library conflicts, ensuring a stable and repeatable install.
 
-4.  **Access the Application**:
-    -   **Frontend UI**: [http://localhost:8501](http://localhost:8501)
-    -   **API Documentation**: [http://localhost:8000/docs](http://localhost:8000/docs)
-    -   **Endee Health Check**: [http://localhost:8080/api/v1/health](http://localhost:8080/api/v1/health)
+4.  **Access points**:
+    -   **Streamlit UI**: [http://localhost:8501](http://localhost:8501)
+    -   **Backend Health**: [http://localhost:8000/health](http://localhost:8000/health)
+    -   **Endee Health**: [http://localhost:8080/api/v1/health](http://localhost:8080/api/v1/health)
 
-### Step 3: Local Development (Manual Setup)
+### Step 3: Data Ingestion (One-Time Setup)
+Once the containers are running, you need to migrate the patient data from the MongoDB cloud store into your local Endee Vector engine.
 
-**⚠️ Windows Users**: Endee Vector DB **only runs on Linux or macOS**. To run it on Windows, you **must** use Docker (Step 2) or set it up inside [WSL (Windows Subsystem for Linux)](https://learn.microsoft.com/en-us/windows/wsl/install).
+```bash
+docker exec -it rag-backend python ingest_to_endee.py
+```
+*This command runs the specialized ingestion script within the backend container to populate the `patient_vectors` index.*
 
 If you are on Linux/Mac or WSL:
 
@@ -139,11 +144,11 @@ The project uses **Endee**—a high-performance, C++ based vector database—to 
 -   **Full Architectural Control**: Interfacing with Endee allows for explicit tuning of vector dimensions, precision types (e.g., `Float32`, `Int8`), and HNSW parameters ($M$, $ef\_search$).
 
 ### Technical Implementation:
-The project leverages the **official [Endee Python SDK](https://github.com/EndeeLabs/endee/tree/main/clients/python)** for all vector operations:
-1.  **Vectorization**: Patient clinical narratives (Chief Complaint, History, etc.) are converted into 768-dimensional embeddings using the **Bio-ClinicalBERT** transformer model.
-2.  **Indexing**: Vectors are stored in a dedicated `patient_vectors` index. We use **Upsert logic** to ensure data idempotency and reliability during frequent clinical record updates.
-3.  **Semantic Search**: When a clinician enters a query, the system generates a query vector and performs an approximate nearest neighbor search via the `index.query()` method.
-4.  **RAG Context**: Endee retrieves the top-K most similar historical cases. The system then dynamically fetches the full structured details from MongoDB to provide the Large Language Model (Groq LlaMA-3) with "Long-term Medical Memory," resulting in highly grounded and accurate discharge summaries.
+The project leverages the **official [Endee Python SDK](https://github.com/EndeeLabs/endee/tree/main/clients/python)** (v0.1.x+) for all vector operations:
+1.  **Vectorization**: Patient clinical narratives are converted into 768-dimensional embeddings using the **Bio-ClinicalBERT** transformer model.
+2.  **Indexing**: Vectors are stored in the optimized `patient_vectors` index.
+3.  **Modern Dependency Management**: The backend is configured to work with **NumPy 2.0+**, aligning with modern Python performance standards and the latest official Endee client requirements.
+4.  **Semantic Search**: High-speed similarity matching via HNSW provides sub-millisecond retrieval of historical clinical data.
 
 ---
 

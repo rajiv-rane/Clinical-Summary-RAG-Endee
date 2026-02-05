@@ -10,10 +10,15 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better caching
+# Copy requirements first
 COPY requirements.txt .
 
-# Install Python dependencies
+# 1. Install heavy ML dependencies separately (Layer 1)
+# Use CPU-only version of torch to save ~700MB
+RUN pip install --no-cache-dir torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+RUN pip install --no-cache-dir transformers==4.44.2
+
+# 2. Install remaining app dependencies (Layer 2)
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
@@ -32,12 +37,6 @@ ENV HF_HOME=/app/.cache/huggingface
 # Port 8000 for FastAPI, Port 8501 for Streamlit
 EXPOSE 8000 8501
 
-# Health check
+# Health check (Optional - depends on backend having /health endpoint)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
-
-# Make startup script executable (it's already copied from COPY . . above)
-RUN chmod +x /app/start_services.sh
-
-# Start both services
-CMD ["/app/start_services.sh"]

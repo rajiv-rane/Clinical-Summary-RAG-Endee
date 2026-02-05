@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import torch
-import chromadb
+import requests
 import requests
 import json
 import os
@@ -315,10 +315,6 @@ def _connect_mongo(uri: str):
     client = MongoClient(uri)
     return client
 
-def _connect_chroma(path: str):
-    client = chromadb.PersistentClient(path=path)
-    collection = client.get_or_create_collection("patient_embeddings")
-    return client, collection
 
 # Page configuration
 st.set_page_config(
@@ -1408,7 +1404,6 @@ if 'selected_similar_patient' not in st.session_state:
 class MedicalRAGSystem:
     def __init__(self):
         self.mongo_uri = "mongodb+srv://ishaanroopesh0102:6eShFuC0pNnFFNGm@cluster0.biujjg4.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
-        self.chroma_path = "vector_db/chroma"
         # Groq API Configuration
         self.groq_api_key = os.getenv("GROQ_API_KEY", "")
         self.groq_base_url = "https://api.groq.com/openai/v1"
@@ -1633,16 +1628,13 @@ FORMATTING REQUIREMENTS:
             self.model = None
     
     def _connect_databases(self):
-        """Connect to MongoDB and ChromaDB"""
+        """Connect to MongoDB and Endee"""
         try:
             # MongoDB connection
             self.mongo_client = _connect_mongo(self.mongo_uri)
             self.db = self.mongo_client["hospital_db"]
             self.patients_collection = self.db["test_patients"]
             
-            # ChromaDB connection (still used for local fallback, but Endee is preferred)
-            self.chroma_client, self.chroma_collection = _connect_chroma(self.chroma_path)
-
             # Endee client initialization
             self.endee_client = Endee(token=None) # Token can be set via ENDEE_API_KEY env var
             self.endee_client.set_base_url(f"http://{os.getenv('ENDEE_HOST', 'localhost')}:8080")
@@ -1738,7 +1730,7 @@ FORMATTING REQUIREMENTS:
             return []
     
     def search_similar_cases(self, query_text: str, n_results: int = 3) -> List[Dict]:
-        """Search for similar cases using RAG - excludes MongoDB patients"""
+        """Search for similar cases using Endee Vector DB - excludes MongoDB patients"""
         try:
             # Get list of MongoDB patient unit numbers to exclude
             mongo_unit_nos = set()
@@ -1753,59 +1745,34 @@ FORMATTING REQUIREMENTS:
             
             similar_cases = []
             
-            # Try to use Endee for search first
+            # Use Endee for search
             try:
                 endee_index = self.endee_client.get_index("patient_vectors")
-                endee_results = endee_index.query(vector=query_vector, top_k=n_results * 3, include_values=True, include_metadata=True)
+                # Official SDK: use 'vector' and 'top_k'
+                endee_results = endee_index.query(vector=query_vector, top_k=n_results * 4) 
                 
                 for item in endee_results:
-                    metadata = item.get('metadata', {})
+                    metadata = item.get('meta', {})
                     unit_no = str(metadata.get('unit_no') or metadata.get('unit no', ''))
                     
                     if unit_no and unit_no in mongo_unit_nos:
                         continue
                     
                     similar_cases.append({
-                        "document": metadata.get('document', ''), # Endee stores document in metadata
+                        "document": metadata.get('document', ''),
                         "metadata": metadata,
-                        "similarity": item.get('score', 0.0)
+                        "similarity": item.get('similarity', 0.0)
                     })
                     
                     if len(similar_cases) >= n_results:
                         break
                 
-                if similar_cases:
-                    return similar_cases
+                return similar_cases
                 
             except Exception as e:
-                st.warning(f"Endee search failed or returned no results: {e}. Falling back to ChromaDB.")
-            
-            # Fallback to ChromaDB if Endee fails or returns no results
-            results = self.chroma_collection.query(
-                query_embeddings=[query_vector],
-                n_results=n_results * 3,  # Get more results to filter
-                include=["documents", "metadatas", "distances"]
-            )
-            
-            for i in range(len(results["documents"][0])):
-                metadata = results["metadatas"][0][i] if i < len(results["metadatas"][0]) else {}
-                unit_no = str(metadata.get('unit_no') or metadata.get('unit no', ''))
+                st.error(f"Endee search failed: {e}")
+                return []
                 
-                # Skip if this patient exists in MongoDB (only show ChromaDB/preprocessed patients)
-                if unit_no and unit_no in mongo_unit_nos:
-                    continue
-                
-                similar_cases.append({
-                    "document": results["documents"][0][i],
-                    "metadata": metadata,
-                    "similarity": 1 - results["distances"][0][i] if i < len(results["distances"][0]) else 0.0
-                })
-                
-                # Stop when we have enough results
-                if len(similar_cases) >= n_results:
-                    break
-            
-            return similar_cases
         except Exception as e:
             st.error(f"Error searching similar cases: {str(e)}")
             return []
@@ -1991,23 +1958,17 @@ Extract Name, Unit No, Date of Birth, and Sex exactly as provided."""
                 "source_type": "feedback_summary" # Tag this as a human-reviewed entry
             }
             
-            # 4. Add to Endee (preferred)
+            # 4. Add to Endee
             try:
-                endee_index = self.endee_client.get_index("patient_vectors")
-                endee_index.upsert(
-                    vectors=[{"id": doc_id, "values": summary_embedding, "metadata": metadata}]
-                )
+                endee_index = self.endee_client.get_index("patient_vectors") # Reference 'self' here
+                # Official SDK: use list of dicts with 'vector' and 'meta'
+                endee_index.upsert([
+                    {"id": doc_id, "vector": summary_embedding, "meta": metadata}
+                ])
                 st.success("✅ Summary added to Endee knowledge base.")
             except Exception as e:
-                st.warning(f"Endee upsert failed: {e}. Falling back to ChromaDB.")
-                # Fallback to ChromaDB if Endee fails
-                self.chroma_collection.add(
-                    embeddings=[summary_embedding],
-                    documents=[summary_text],  # Store the full summary as the document
-                    metadatas=[metadata],
-                    ids=[doc_id]
-                )
-                st.success("✅ Summary added to ChromaDB knowledge base (Endee fallback).")
+                st.error(f"❌ Endee upsert failed: {str(e)}")
+                return False
             
             # 5. Show notification (as requested)
             # st.toast is available in newer Streamlit; fall back to success if missing
